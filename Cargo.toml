@@ -6,6 +6,7 @@ rust-version = "1.81"
 description = "A compact immutable string map based on binary fuse filters"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/caspark/static-fuse-map"
+homepage = "https://caspark.github.io/static-fuse-map/"
 keywords = ["map", "immutable", "static", "xxhash", "fuse"]
 categories = ["data-structures", "no-std"]
 

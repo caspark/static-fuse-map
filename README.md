@@ -2,6 +2,8 @@
 
 > **Clanker port:** this crate is an AI-assisted Rust port of Daniel Lemire's Go [`constmap`](https://github.com/lemire/constmap) implementation.
 
+Interactive explanation: https://caspark.github.io/static-fuse-map/
+
 A fast, compact, immutable map from strings to `u64`-encoded values using the binary fuse filter construction.
 
 It is intended for cases where all keys are known at construction time and fast, compact lookups are required afterward.

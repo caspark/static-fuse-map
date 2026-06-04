@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Static Fuse Map: animated construction and lookup</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a31;
+      --panel-2: #17213e;
+      --text: #eef3ff;
+      --muted: #9fb0d4;
+      --line: #2f3f69;
+      --accent: #7dd3fc;
+      --accent-2: #c084fc;
+      --good: #86efac;
+      --bad: #fca5a5;
+      --warn: #fde68a;
+      --cell: #1f2a4b;
+      --cell-hi: #3b2f73;
+      --cell-target: #064e3b;
+      --cell-other: #4338ca;
+      --cell-lookup: #7c2d12;
+      --shadow: 0 18px 70px rgba(0, 0, 0, .35);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 8%, rgba(125, 211, 252, .20), transparent 28rem),
+        radial-gradient(circle at 78% 0%, rgba(192, 132, 252, .18), transparent 34rem),
+        linear-gradient(180deg, #070b16 0%, var(--bg) 34%, #090d19 100%);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 32px clamp(16px, 4vw, 56px) 14px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      align-items: start;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(2rem, 5vw, 4.5rem);
+      line-height: .95;
+      letter-spacing: -0.06em;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      color: var(--muted);
+      font-size: clamp(1rem, 1.7vw, 1.22rem);
+      line-height: 1.55;
+    }
+
+    .mode-card {
+      background: rgba(18, 26, 49, .86);
+      border: 1px solid rgba(148, 163, 184, .18);
+      border-radius: 999px;
+      padding: 10px 14px;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+    }
+
+    .toggle {
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+      cursor: pointer;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .toggle input { display: none; }
+    .switch {
+      width: 52px;
+      height: 28px;
+      border-radius: 999px;
+      background: #263553;
+      position: relative;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 3px;
+      top: 3px;
+      border-radius: 50%;
+      background: var(--accent);
+      transition: transform .2s ease, background .2s ease;
+    }
+    .toggle input:checked + .switch::after {
+      transform: translateX(24px);
+      background: var(--accent-2);
+    }
+    .mode-name { color: var(--text); font-weight: 700; }
+
+    main {
+      padding: 0 clamp(16px, 4vw, 56px) 48px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .equation-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: rgba(18, 26, 49, .86);
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .mini {
+      padding: 16px 18px;
+      min-height: 116px;
+    }
+
+    .mini h3, .panel-title h2 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      letter-spacing: .01em;
+    }
+
+    .mini p, .note, .timeline-text, .lookup-text {
+      color: var(--muted);
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    code, .bits, .formula {
+      font-family: var(--mono);
+      color: #dbeafe;
+    }
+
+    .formula {
+      display: inline-block;
+      background: rgba(15, 23, 42, .75);
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: 10px;
+      padding: 2px 7px;
+      margin: 0 2px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      padding: 14px;
+      background: rgba(18, 26, 49, .76);
+      border: 1px solid rgba(148, 163, 184, .16);
+      border-radius: var(--radius);
+    }
+
+    button, select {
+      border: 1px solid rgba(148, 163, 184, .24);
+      background: #1f2a44;
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 13px;
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 700;
+      transition: transform .08s ease, background .15s ease, border-color .15s ease;
+    }
+    button:hover { background: #29375a; border-color: rgba(125, 211, 252, .55); }
+    button:active { transform: translateY(1px); }
+    button.primary { background: linear-gradient(135deg, #0369a1, #6d28d9); border-color: transparent; }
+    button.good { background: linear-gradient(135deg, #047857, #0e7490); border-color: transparent; }
+
+    .speed {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      margin-left: auto;
+    }
+    input[type="range"] { accent-color: var(--accent); }
+
+    .visual-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, .9fr) minmax(520px, 1.7fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .left-stack { display: grid; gap: 18px; }
+
+    .panel-title {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, .12);
+      background: rgba(15, 23, 42, .38);
+    }
+
+    .dataset { padding: 10px; display: grid; gap: 8px; }
+    .data-row {
+      display: grid;
+      grid-template-columns: 1.1fr .7fr 1fr;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid rgba(148, 163, 184, .12);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, .38);
+      font-size: .92rem;
+    }
+    .data-row.header {
+      color: var(--muted);
+      background: transparent;
+      border-color: transparent;
+      padding-bottom: 2px;
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .graph-card { position: relative; min-height: 690px; }
+    .graph-stage {
+      position: relative;
+      display: grid;
+      grid-template-columns: 230px 1fr;
+      gap: 20px;
+      padding: 18px;
+      min-height: 548px;
+    }
+    #edgeSvg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .keys-column, .table-column { position: relative; z-index: 2; }
+
+    .keys-column { display: grid; gap: 9px; align-content: start; }
+    .key-card {
+      border: 1px solid rgba(148, 163, 184, .18);
+      background: rgba(15, 23, 42, .88);
+      border-left: 5px solid var(--edge-color);
+      border-radius: 14px;
+      padding: 9px 10px;
+      transition: opacity .18s ease, transform .18s ease, background .18s ease, box-shadow .18s ease;
+    }
+    .key-card.current {
+      background: rgba(30, 41, 89, .98);
+      box-shadow: 0 0 0 2px rgba(125, 211, 252, .45), 0 14px 35px rgba(0,0,0,.28);
+      transform: translateX(4px);
+    }
+    .key-card.peeled { opacity: .46; }
+    .key-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .key-name { font-weight: 800; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: rgba(148, 163, 184, .13);
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    .key-detail { margin-top: 5px; color: var(--muted); font-size: .78rem; line-height: 1.35; }
+    .key-detail .bits { color: #bfdbfe; }
+
+    .table-column { display: grid; gap: 12px; align-content: start; }
+    .params {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: .83rem;
+    }
+    .params .pill { background: rgba(125, 211, 252, .10); }
+
+    .segment-ruler {
+      display: grid;
+      grid-template-columns: repeat(20, 1fr);
+      gap: 4px;
+      color: var(--muted);
+      font-size: .68rem;
+    }
+    .ruler-cell {
+      border-radius: 6px;
+      padding: 4px 2px;
+      text-align: center;
+      background: rgba(148, 163, 184, .08);
+      min-width: 0;
+    }
+    .ruler-cell.overlap { background: rgba(125, 211, 252, .12); }
+
+    .cells-grid {
+      display: grid;
+      grid-template-columns: repeat(10, minmax(50px, 1fr));
+      gap: 7px;
+    }
+    .cell {
+      min-height: 92px;
+      border: 1px solid rgba(148, 163, 184, .16);
+      background: var(--cell);
+      border-radius: 12px;
+      padding: 7px;
+      position: relative;
+      transition: transform .16s ease, background .16s ease, box-shadow .16s ease, border-color .16s ease;
+      overflow: hidden;
+    }
+    .cell::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(125,211,252,.08), transparent 48%, rgba(192,132,252,.06));
+      opacity: .75;
+      pointer-events: none;
+    }
+    .cell > * { position: relative; }
+    .cell.hot { background: var(--cell-hi); border-color: rgba(192, 132, 252, .75); transform: translateY(-2px); }
+    .cell.target { background: var(--cell-target); border-color: rgba(134, 239, 172, .9); box-shadow: 0 0 0 2px rgba(134, 239, 172, .25); }
+    .cell.other { background: var(--cell-other); border-color: rgba(165, 180, 252, .85); }
+    .cell.lookup { background: var(--cell-lookup); border-color: rgba(251, 191, 36, .9); box-shadow: 0 0 0 2px rgba(251, 191, 36, .22); }
+    .cell.singleton .degree { color: var(--good); }
+    .idx { font-weight: 900; color: white; font-size: .82rem; }
+    .degree { float: right; color: var(--muted); font-size: .75rem; }
+    .cell-bits { margin-top: 8px; font-family: var(--mono); font-size: .75rem; display: grid; gap: 3px; }
+    .cell-bits span { color: #dbeafe; }
+    .cell-bits .muted { color: #64748b; }
+    .tags { margin-top: 6px; display: flex; gap: 3px; flex-wrap: wrap; }
+    .tag { font-size: .62rem; color: #dbeafe; background: rgba(15,23,42,.55); padding: 1px 4px; border-radius: 999px; }
+
+    .timeline {
+      margin: 0 18px 18px;
+      padding: 16px;
+      background: rgba(15, 23, 42, .68);
+      border: 1px solid rgba(148, 163, 184, .14);
+      border-radius: 16px;
+      min-height: 120px;
+    }
+    .timeline h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    .timeline-text { font-size: .98rem; }
+    .stack-view {
+      margin-top: 10px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: .82rem;
+    }
+    .stack-item {
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: rgba(148, 163, 184, .12);
+      border: 1px solid rgba(148, 163, 184, .13);
+    }
+
+    .lookup-card { padding-bottom: 14px; }
+    .lookup-controls { display: flex; gap: 10px; padding: 14px 18px; align-items: center; flex-wrap: wrap; }
+    .lookup-readout {
+      margin: 0 18px;
+      padding: 14px;
+      background: rgba(15, 23, 42, .68);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, .14);
+      min-height: 150px;
+    }
+    .lookup-result {
+      margin-top: 10px;
+      display: grid;
+      gap: 8px;
+    }
+    .result-line {
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: rgba(148, 163, 184, .08);
+      border: 1px solid rgba(148, 163, 184, .12);
+      font-size: .93rem;
+    }
+    .result-line.good { border-color: rgba(134,239,172,.35); color: #dcfce7; }
+    .result-line.bad { border-color: rgba(252,165,165,.35); color: #fee2e2; }
+    .result-line.warn { border-color: rgba(253,230,138,.35); color: #fef3c7; }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 0 18px 14px;
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .swatch { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
+
+    a { color: #93c5fd; }
+
+    @media (max-width: 1100px) {
+      header { grid-template-columns: 1fr; }
+      .equation-row, .visual-grid { grid-template-columns: 1fr; }
+      .graph-stage { grid-template-columns: 1fr; }
+      #edgeSvg { display: none; }
+      .cells-grid { grid-template-columns: repeat(5, minmax(50px, 1fr)); }
+      .segment-ruler { grid-template-columns: repeat(5, 1fr); }
+      .speed { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Static fuse map, animated</h1>
+      <p class="subtitle">
+        A static fuse map stores each key/value as one XOR equation. Construction peels those
+        equations into an order that can be solved backward; lookup just reads three cells and XORs them.
+        This visualization uses real strings and deterministic 64-bit hashes, but displays 8-bit values so
+        the bit patterns are readable.
+      </p>
+    </div>
+    <div class="mode-card">
+      <label class="toggle">
+        <span>Normal</span>
+        <input id="verifiedMode" type="checkbox" checked="checked">
+        <span class="switch" aria-hidden="true"></span>
+        <span class="mode-name" id="modeName">verified</span>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <section class="equation-row">
+      <div class="card mini">
+        <h3>1. Hash each key to three cells</h3>
+        <p><span class="formula">key → h0, h1, h2</span>. The real crate uses XXH64 then a seed mix; this page uses the same kind of 64-bit mixing in JavaScript.</p>
+      </div>
+      <div class="card mini">
+        <h3>2. Solve XOR equations</h3>
+        <p><span class="formula">table[h0] ⊕ table[h1] ⊕ table[h2] = value</span>. Peeling finds a cell that belongs to only one remaining key.</p>
+      </div>
+      <div class="card mini">
+        <h3>3. Verified mode adds a second equation</h3>
+        <p><span class="formula">check[h0] ⊕ check[h1] ⊕ check[h2] = fingerprint</span>. If this fails on lookup, the key is absent.</p>
+      </div>
+    </section>
+
+    <section class="controls card">
+      <button id="resetBtn">Reset build</button>
+      <button id="stepBtn" class="primary">Step construction</button>
+      <button id="playBtn">Play</button>
+      <button id="finishBtn">Jump to built map</button>
+      <label class="speed">Speed <input id="speed" type="range" min="120" max="1400" value="120"></label>
+    </section>
+
+    <section class="visual-grid">
+      <div class="left-stack">
+        <div class="card">
+          <div class="panel-title">
+            <h2>Real demo data</h2>
+            <p class="note">The values are bytes purely so XOR math fits on screen. The Rust crate stores full <code>u64</code> cells.</p>
+          </div>
+          <div class="dataset" id="dataset"><div class="data-row header"><span>key</span><span>value</span><span>bits</span></div>
+        <div class="data-row" style="border-left: 4px solid #38bdf8">
+          <span><strong>apple</strong></span>
+          <span>100</span>
+          <span class="bits">01100100</span>
+        </div>
+        <div class="data-row" style="border-left: 4px solid #a78bfa">
+          <span><strong>banana</strong></span>
+          <span>200</span>
+          <span class="bits">11001000</span>
+        </div>
+        <div class="data-row" style="border-left: 4px solid #fb7185">
+          <span><strong>cherry</strong></span>
+          <span>45</span>
+          <span class="bits">00101101</span>
+        </div>
+        <div class="data-row" style="border-left: 4px solid #34d399">
+          <span><strong>date</strong></span>
+          <span>144</span>
+          <span class="bits">10010000</span>
+        </div>
+        <div class="data-row" style="border-left: 4px solid #fbbf24">
+          <span><strong>elderberry</strong></span>
+          <span>63</span>
+          <span class="bits">00111111</span>
+        </div>
+        <div class="data-row" style="border-left: 4px solid #f472b6">
+          <span><strong>fig</strong></span>
+          <span>174</span>
+          <span class="bits">10101110</span>
+        </div></div>
+        </div>
+
+        <div class="card lookup-card">
+          <div class="panel-title">
+            <h2>Lookup animation</h2>
+            <p class="note">Run this after or during construction; it jumps to the finished map first.</p>
+          </div>
+          <div class="lookup-controls">
+            <select id="lookupKey"><option value="apple">apple (stored)</option><option value="banana">banana (stored)</option><option value="cherry">cherry (stored)</option><option value="date">date (stored)</option><option value="elderberry">elderberry (stored)</option><option value="fig">fig (stored)</option><option value="grape" selected="selected">grape (missing)</option></select>
+            <button id="lookupBtn" class="good">Animate lookup</button>
+          </div>
+          <div class="lookup-readout" id="lookupReadout"><p class="lookup-text">Choose a present key or the missing key <span class="formula">grape</span>, then animate lookup. Normal mode will always produce a byte; verified mode checks a fingerprint first.</p></div>
+        </div>
+      </div>
+
+      <div class="card graph-card">
+        <div class="panel-title">
+          <h2>Construction graph and table cells</h2>
+          <p class="note">Colored lines connect each key equation to its three table cells. Faded lines have been peeled.</p>
+        </div>
+        <div class="graph-stage" id="graphStage">
+          <svg id="edgeSvg" viewBox="0 0 1356.699951171875 663.2999877929688"><path d="M 248 66.5250015258789 C 328.167497253418 66.5250015258789, 345.9824966430664 238, 426.1499938964844 238" fill="none" stroke="#38bdf8" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 66.5250015258789 C 425.1574935913086 66.5250015258789, 464.5258255004883 238, 641.6833190917969 238" fill="none" stroke="#38bdf8" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 66.5250015258789 C 619.1374862670898 66.5250015258789, 701.6124832153321 238, 1072.7499694824219 238" fill="none" stroke="#38bdf8" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 172.57498931884766 C 376.6625263214112 172.57498931884766, 405.2541988372802 133, 533.9167251586914 133" fill="none" stroke="#a78bfa" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 172.57498931884766 C 619.1374862670898 172.57498931884766, 701.6124832153321 133, 1072.7499694824219 133" fill="none" stroke="#a78bfa" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 172.57498931884766 C 667.6325119018554 172.57498931884766, 760.884181213379 133, 1180.5166931152344 133" fill="none" stroke="#a78bfa" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 278.6249694824219 C 619.1374862670898 278.6249694824219, 701.6124832153321 133, 1072.7499694824219 133" fill="none" stroke="#fb7185" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 278.6249694824219 C 667.6325119018554 278.6249694824219, 760.884181213379 133, 1180.5166931152344 133" fill="none" stroke="#fb7185" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 278.6249694824219 C 376.6625263214112 278.6249694824219, 405.2541988372802 238, 533.9167251586914 238" fill="none" stroke="#fb7185" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 384.67496490478516 C 716.1274826049805 384.67496490478516, 820.1558120727539 133, 1288.2832946777344 133" fill="none" stroke="#34d399" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 384.67496490478516 C 425.1574935913086 384.67496490478516, 464.5258255004883 238, 641.6833190917969 238" fill="none" stroke="#34d399" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 384.67496490478516 C 619.1374862670898 384.67496490478516, 701.6124832153321 238, 1072.7499694824219 238" fill="none" stroke="#34d399" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 490.7249526977539 C 522.1474899291993 490.7249526977539, 583.0691543579101 133, 857.2166442871094 133" fill="none" stroke="#fbbf24" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 490.7249526977539 C 328.167497253418 490.7249526977539, 345.9824966430664 238, 426.1499938964844 238" fill="none" stroke="#fbbf24" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 490.7249526977539 C 425.1574935913086 490.7249526977539, 464.5258255004883 238, 641.6833190917969 238" fill="none" stroke="#fbbf24" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 596.7750015258789 C 570.6425189971924 596.7750015258789, 642.340856552124 133, 964.9833755493164 133" fill="none" stroke="#f472b6" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 596.7750015258789 C 328.167497253418 596.7750015258789, 345.9824966430664 238, 426.1499938964844 238" fill="none" stroke="#f472b6" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path><path d="M 248 596.7750015258789 C 376.6625263214112 596.7750015258789, 405.2541988372802 238, 533.9167251586914 238" fill="none" stroke="#f472b6" stroke-width="1.6" opacity=".16" stroke-dasharray="5 5"></path></svg>
+          <div class="keys-column" id="keysColumn"><div class="key-card peeled " id="key-0" style="--edge-color: #38bdf8">
+          <div class="key-top"><span class="key-name">apple</span><span class="pill">v 100</span></div>
+          <div class="key-detail">
+            value <span class="bits">01100100</span><br>
+            cells <span class="bits">[11, 13, 17]</span><br>fingerprint <span class="bits">01110110</span>
+          </div>
+        </div><div class="key-card peeled " id="key-1" style="--edge-color: #a78bfa">
+          <div class="key-top"><span class="key-name">banana</span><span class="pill">v 200</span></div>
+          <div class="key-detail">
+            value <span class="bits">11001000</span><br>
+            cells <span class="bits">[2, 7, 8]</span><br>fingerprint <span class="bits">11001100</span>
+          </div>
+        </div><div class="key-card peeled " id="key-2" style="--edge-color: #fb7185">
+          <div class="key-top"><span class="key-name">cherry</span><span class="pill">v 45</span></div>
+          <div class="key-detail">
+            value <span class="bits">00101101</span><br>
+            cells <span class="bits">[7, 8, 12]</span><br>fingerprint <span class="bits">10001100</span>
+          </div>
+        </div><div class="key-card peeled " id="key-3" style="--edge-color: #34d399">
+          <div class="key-top"><span class="key-name">date</span><span class="pill">v 144</span></div>
+          <div class="key-detail">
+            value <span class="bits">10010000</span><br>
+            cells <span class="bits">[9, 13, 17]</span><br>fingerprint <span class="bits">10111010</span>
+          </div>
+        </div><div class="key-card peeled " id="key-4" style="--edge-color: #fbbf24">
+          <div class="key-top"><span class="key-name">elderberry</span><span class="pill">v 63</span></div>
+          <div class="key-detail">
+            value <span class="bits">00111111</span><br>
+            cells <span class="bits">[5, 11, 13]</span><br>fingerprint <span class="bits">00110101</span>
+          </div>
+        </div><div class="key-card peeled " id="key-5" style="--edge-color: #f472b6">
+          <div class="key-top"><span class="key-name">fig</span><span class="pill">v 174</span></div>
+          <div class="key-detail">
+            value <span class="bits">10101110</span><br>
+            cells <span class="bits">[6, 11, 12]</span><br>fingerprint <span class="bits">01001110</span>
+          </div>
+        </div></div>
+          <div class="table-column">
+            <div class="params" id="params">
+        <span class="pill">seed 0x910a2dec89025cc1</span>
+        <span class="pill">segment length 4</span>
+        <span class="pill">segment count 3</span>
+        <span class="pill">array cells 20</span>
+        <span class="pill">display width 8 bits</span>
+      </div>
+            <div class="segment-ruler" id="segmentRuler"><div class="ruler-cell ">h0</div><div class="ruler-cell ">h0</div><div class="ruler-cell ">h0</div><div class="ruler-cell ">h0</div><div class="ruler-cell overlap">h0/h1</div><div class="ruler-cell overlap">h0/h1</div><div class="ruler-cell overlap">h0/h1</div><div class="ruler-cell overlap">h0/h1</div><div class="ruler-cell overlap">h0/h1/h2</div><div class="ruler-cell overlap">h0/h1/h2</div><div class="ruler-cell overlap">h0/h1/h2</div><div class="ruler-cell overlap">h0/h1/h2</div><div class="ruler-cell overlap">h1/h2</div><div class="ruler-cell overlap">h1/h2</div><div class="ruler-cell overlap">h1/h2</div><div class="ruler-cell overlap">h1/h2</div><div class="ruler-cell ">h2</div><div class="ruler-cell ">h2</div><div class="ruler-cell ">h2</div><div class="ruler-cell ">h2</div></div>
+            <div class="cells-grid" id="cellsGrid"><div class="cell" id="cell-0">
+          <div><span class="idx">0</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span></div>
+        </div><div class="cell" id="cell-1">
+          <div><span class="idx">1</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span></div>
+        </div><div class="cell" id="cell-2">
+          <div><span class="idx">2</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span></div>
+        </div><div class="cell" id="cell-3">
+          <div><span class="idx">3</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span></div>
+        </div><div class="cell" id="cell-4">
+          <div><span class="idx">4</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span></div>
+        </div><div class="cell" id="cell-5">
+          <div><span class="idx">5</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span></div>
+        </div><div class="cell" id="cell-6">
+          <div><span class="idx">6</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span></div>
+        </div><div class="cell" id="cell-7">
+          <div><span class="idx">7</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span></div>
+        </div><div class="cell" id="cell-8">
+          <div><span class="idx">8</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">11001000</span></div>
+            <div>C <span class="">11001100</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-9">
+          <div><span class="idx">9</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">10111111</span></div>
+            <div>C <span class="">11000010</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-10">
+          <div><span class="idx">10</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-11">
+          <div><span class="idx">11</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">01001011</span></div>
+            <div>C <span class="">00001110</span></div>
+          </div>
+          <div class="tags"><span class="tag">h0</span><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-12">
+          <div><span class="idx">12</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">11100101</span></div>
+            <div>C <span class="">01000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-13">
+          <div><span class="idx">13</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">01110100</span></div>
+            <div>C <span class="">00111011</span></div>
+          </div>
+          <div class="tags"><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-14">
+          <div><span class="idx">14</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-15">
+          <div><span class="idx">15</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h1</span><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-16">
+          <div><span class="idx">16</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-17">
+          <div><span class="idx">17</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="">01011011</span></div>
+            <div>C <span class="">01000011</span></div>
+          </div>
+          <div class="tags"><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-18">
+          <div><span class="idx">18</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h2</span></div>
+        </div><div class="cell" id="cell-19">
+          <div><span class="idx">19</span><span class="degree">deg 0</span></div>
+          <div class="cell-bits">
+            <div>D <span class="muted">00000000</span></div>
+            <div>C <span class="muted">00000000</span></div>
+          </div>
+          <div class="tags"><span class="tag">h2</span></div>
+        </div></div>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="swatch" style="background: var(--cell-hi)"></i> current hash/peel cells</span>
+          <span><i class="swatch" style="background: var(--cell-target)"></i> assigned target cell</span>
+          <span><i class="swatch" style="background: var(--cell-other)"></i> cells read by assignment</span>
+          <span><i class="swatch" style="background: var(--cell-lookup)"></i> lookup cells</span>
+        </div>
+        <div class="timeline" id="timeline"><div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h3>Built: lookup is just hash, three reads, two XORs</h3><span class="pill">step 22 / 22</span></div><p class="timeline-text">Verified mode stores both data cells and check cells. Missing keys usually fail the fingerprint equation and return <span class="formula">None</span>.</p><div class="stack-view"><strong>Peel stack:</strong><span class="stack-item">date@9</span><span class="stack-item">apple@17</span><span class="stack-item">elderberry@13</span><span class="stack-item">fig@11</span><span class="stack-item">cherry@12</span><span class="stack-item">banana@8</span></div></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+
+    const MASK64 = (1n << 64n) - 1n;
+    const COLORS = ["#38bdf8", "#a78bfa", "#fb7185", "#34d399", "#fbbf24", "#f472b6"];
+    const DEMO_ITEMS = [
+      { key: "apple", value: 0x64 },
+      { key: "banana", value: 0xc8 },
+      { key: "cherry", value: 0x2d },
+      { key: "date", value: 0x90 },
+      { key: "elderberry", value: 0x3f },
+      { key: "fig", value: 0xae },
+    ];
+    const MISSING_KEY = "grape";
+
+    const params = {
+      segmentLength: 4,
+      segmentCount: 3,
+      get segmentCountLength() { return this.segmentLength * this.segmentCount; },
+      get arrayLen() { return this.segmentLength * (this.segmentCount + 2); },
+      get mask() { return this.segmentLength - 1; },
+    };
+
+    let demo = buildDemo();
+    let currentStep = 0;
+    let playTimer = null;
+    let lookupTimer = null;
+    let lookup = { active: false, key: DEMO_ITEMS[1].key, step: -1 };
+
+    const els = {
+      verifiedMode: document.getElementById("verifiedMode"),
+      modeName: document.getElementById("modeName"),
+      dataset: document.getElementById("dataset"),
+      keysColumn: document.getElementById("keysColumn"),
+      cellsGrid: document.getElementById("cellsGrid"),
+      edgeSvg: document.getElementById("edgeSvg"),
+      graphStage: document.getElementById("graphStage"),
+      timeline: document.getElementById("timeline"),
+      params: document.getElementById("params"),
+      segmentRuler: document.getElementById("segmentRuler"),
+      resetBtn: document.getElementById("resetBtn"),
+      stepBtn: document.getElementById("stepBtn"),
+      playBtn: document.getElementById("playBtn"),
+      finishBtn: document.getElementById("finishBtn"),
+      speed: document.getElementById("speed"),
+      lookupKey: document.getElementById("lookupKey"),
+      lookupBtn: document.getElementById("lookupBtn"),
+      lookupReadout: document.getElementById("lookupReadout"),
+    };
+
+    function u64(x) { return x & MASK64; }
+
+    function fnv1a64(str) {
+      let h = 14695981039346656037n;
+      for (let i = 0; i < str.length; i++) {
+        h ^= BigInt(str.charCodeAt(i) & 0xff);
+        h = u64(h * 1099511628211n);
+      }
+      return h;
+    }
+
+    function murmur64(h) {
+      h ^= h >> 33n;
+      h = u64(h * 0xff51afd7ed558ccdn);
+      h ^= h >> 33n;
+      h = u64(h * 0xc4ceb9fe1a85ec53n);
+      h ^= h >> 33n;
+      return u64(h);
+    }
+
+    function mixsplit(keyHash, seed) {
+      return murmur64(u64(keyHash + seed));
+    }
+
+    function splitmix64FromCounter(counter) {
+      let seed = u64(BigInt(counter) + 0x9E3779B97F4A7C15n);
+      let z1 = u64((seed ^ (seed >> 30n)) * 0xBF58476D1CE4E5B9n);
+      return u64((z1 ^ (z1 >> 27n)) * 0x94D049BB133111EBn) ^ (u64((z1 ^ (z1 >> 27n)) * 0x94D049BB133111EBn) >> 31n);
+    }
+
+    function positions(hash) {
+      const h0 = Number((hash * BigInt(params.segmentCountLength)) >> 64n);
+      let h1 = h0 + params.segmentLength;
+      let h2 = h1 + params.segmentLength;
+      h1 ^= Number((hash >> 18n) & BigInt(params.mask));
+      h2 ^= Number(hash & BigInt(params.mask));
+      return [h0, h1, h2];
+    }
+
+    function fingerprintByte(hash) {
+      return Number((hash ^ (hash >> 32n)) & 0xffn);
+    }
+
+    function byteBits(v) {
+      return (v & 0xff).toString(2).padStart(8, "0");
+    }
+
+    function hex64(x) {
+      return "0x" + x.toString(16).padStart(16, "0");
+    }
+
+    function buildDemo() {
+      for (let counter = 1; counter < 500; counter++) {
+        const seed = splitmix64FromCounter(counter);
+        const edges = DEMO_ITEMS.map((item, id) => {
+          const keyHash = fnv1a64(item.key);
+          const hash = mixsplit(keyHash, seed);
+          return {
+            ...item,
+            id,
+            color: COLORS[id % COLORS.length],
+            keyHash,
+            hash,
+            positions: positions(hash),
+            fp: fingerprintByte(hash),
+          };
+        });
+        const built = tryPeelAndAssign(edges);
+        if (built) {
+          return { seed, counter, edges, ...built };
+        }
+      }
+      throw new Error("Could not find a peelable demo seed");
+    }
+
+    function tryPeelAndAssign(edges) {
+      const seen = new Set();
+      for (const edge of edges) {
+        const h = edge.hash.toString();
+        if (seen.has(h)) return null;
+        seen.add(h);
+      }
+
+      const remaining = new Set(edges.map(e => e.id));
+      const cellEdges = Array.from({ length: params.arrayLen }, () => []);
+      for (const edge of edges) {
+        for (const p of edge.positions) cellEdges[p].push(edge.id);
+      }
+      const degree = cellEdges.map(list => list.length);
+      const queue = [];
+      for (let i = 0; i < degree.length; i++) if (degree[i] === 1) queue.push(i);
+
+      const peelSteps = [];
+      const stack = [];
+
+      while (queue.length) {
+        const cell = queue.pop();
+        if (degree[cell] !== 1) continue;
+        const edgeId = cellEdges[cell].find(id => remaining.has(id));
+        if (edgeId === undefined) continue;
+        const edge = edges[edgeId];
+        const foundSlot = edge.positions.indexOf(cell);
+        remaining.delete(edgeId);
+        stack.push({ edgeId, cell, foundSlot });
+        peelSteps.push({ type: "peel", edgeId, cell, foundSlot });
+        for (const p of edge.positions) {
+          if (p === cell) continue;
+          degree[p]--;
+          if (degree[p] === 1) queue.push(p);
+        }
+      }
+
+      if (stack.length !== edges.length) return null;
+
+      const data = Array(params.arrayLen).fill(0);
+      const checks = Array(params.arrayLen).fill(0);
+      const assignSteps = [];
+      for (let i = stack.length - 1; i >= 0; i--) {
+        const entry = stack[i];
+        const edge = edges[entry.edgeId];
+        const target = entry.cell;
+        const others = edge.positions.filter(p => p !== target);
+        const dataValue = edge.value ^ data[others[0]] ^ data[others[1]];
+        const checkValue = edge.fp ^ checks[others[0]] ^ checks[others[1]];
+        assignSteps.push({
+          type: "assign",
+          edgeId: edge.id,
+          target,
+          others,
+          value: edge.value,
+          fp: edge.fp,
+          otherData: [data[others[0]], data[others[1]]],
+          dataValue,
+          otherChecks: [checks[others[0]], checks[others[1]]],
+          checkValue,
+        });
+        data[target] = dataValue;
+        checks[target] = checkValue;
+      }
+
+      const events = [
+        { type: "intro" },
+        ...edges.map(edge => ({ type: "hash", edgeId: edge.id })),
+        { type: "degree" },
+        ...peelSteps,
+        { type: "assignmentIntro" },
+        ...assignSteps,
+        { type: "done" },
+      ];
+
+      return { peelSteps, assignSteps, finalData: data, finalChecks: checks, events };
+    }
+
+    function stateAt(step) {
+      const remaining = new Set(demo.edges.map(e => e.id));
+      const peeled = new Set();
+      const data = Array(params.arrayLen).fill(0);
+      const checks = Array(params.arrayLen).fill(0);
+      const assigned = new Set();
+      const stack = [];
+      let hashedCount = 0;
+
+      for (let i = 0; i <= step && i < demo.events.length; i++) {
+        const ev = demo.events[i];
+        if (ev.type === "hash") hashedCount = Math.max(hashedCount, ev.edgeId + 1);
+        if (ev.type === "peel") {
+          remaining.delete(ev.edgeId);
+          peeled.add(ev.edgeId);
+          stack.push(ev);
+        }
+        if (ev.type === "assign") {
+          data[ev.target] = ev.dataValue;
+          checks[ev.target] = ev.checkValue;
+          assigned.add(ev.target);
+        }
+      }
+
+      const degrees = Array(params.arrayLen).fill(0);
+      for (const edge of demo.edges) {
+        if (!remaining.has(edge.id)) continue;
+        for (const p of edge.positions) degrees[p]++;
+      }
+
+      return { remaining, peeled, data, checks, assigned, degrees, stack, hashedCount };
+    }
+
+    function currentEvent() {
+      return demo.events[Math.min(currentStep, demo.events.length - 1)];
+    }
+
+    function verified() { return els.verifiedMode.checked; }
+
+    function render() {
+      els.modeName.textContent = verified() ? "verified" : "unchecked";
+      const state = stateAt(currentStep);
+      const ev = currentEvent();
+      renderDataset();
+      renderParams();
+      renderRuler();
+      renderKeys(state, ev);
+      renderCells(state, ev);
+      renderTimeline(state, ev);
+      renderLookupReadout(state);
+      requestAnimationFrame(() => drawEdges(state, ev));
+    }
+
+    function renderDataset() {
+      const header = `<div class="data-row header"><span>key</span><span>value</span><span>bits</span></div>`;
+      const rows = demo.edges.map(edge => `
+        <div class="data-row" style="border-left: 4px solid ${edge.color}">
+          <span><strong>${edge.key}</strong></span>
+          <span>${edge.value}</span>
+          <span class="bits">${byteBits(edge.value)}</span>
+        </div>`).join("");
+      els.dataset.innerHTML = header + rows;
+    }
+
+    function renderParams() {
+      els.params.innerHTML = `
+        <span class="pill">seed ${hex64(demo.seed)}</span>
+        <span class="pill">segment length ${params.segmentLength}</span>
+        <span class="pill">segment count ${params.segmentCount}</span>
+        <span class="pill">array cells ${params.arrayLen}</span>
+        <span class="pill">display width 8 bits</span>
+      `;
+    }
+
+    function tagsForCell(i) {
+      const tags = [];
+      if (i < params.segmentCountLength) tags.push("h0");
+      if (i >= params.segmentLength && i < params.segmentLength + params.segmentCountLength) tags.push("h1");
+      if (i >= 2 * params.segmentLength && i < 2 * params.segmentLength + params.segmentCountLength) tags.push("h2");
+      return tags;
+    }
+
+    function renderRuler() {
+      els.segmentRuler.innerHTML = Array.from({ length: params.arrayLen }, (_, i) => {
+        const tags = tagsForCell(i);
+        return `<div class="ruler-cell ${tags.length > 1 ? "overlap" : ""}">${tags.join("/")}</div>`;
+      }).join("");
+    }
+
+    function eventPositions(ev) {
+      if (!ev) return [];
+      if (ev.type === "hash" || ev.type === "peel") return demo.edges[ev.edgeId].positions;
+      if (ev.type === "assign") return [ev.target, ...ev.others];
+      return [];
+    }
+
+    function lookupInfoForSelected() {
+      const key = lookup.key;
+      const keyHash = fnv1a64(key);
+      const hash = mixsplit(keyHash, demo.seed);
+      const ps = positions(hash);
+      const value = ps.reduce((acc, p) => acc ^ demo.finalData[p], 0);
+      const fp = fingerprintByte(hash);
+      const check = ps.reduce((acc, p) => acc ^ demo.finalChecks[p], 0);
+      const present = check === fp;
+      const known = demo.edges.some(e => e.key === key);
+      return { key, keyHash, hash, positions: ps, value, fp, check, present, known };
+    }
+
+    function renderKeys(state, ev) {
+      const activeEdge = ev && (ev.type === "hash" || ev.type === "peel" || ev.type === "assign") ? ev.edgeId : -1;
+      els.keysColumn.innerHTML = demo.edges.map(edge => {
+        const peeledClass = state.peeled.has(edge.id) ? "peeled" : "";
+        const currentClass = activeEdge === edge.id ? "current" : "";
+        return `<div class="key-card ${peeledClass} ${currentClass}" id="key-${edge.id}" style="--edge-color: ${edge.color}">
+          <div class="key-top"><span class="key-name">${edge.key}</span><span class="pill">v ${edge.value}</span></div>
+          <div class="key-detail">
+            value <span class="bits">${byteBits(edge.value)}</span><br>
+            cells <span class="bits">[${edge.positions.join(", ")}]</span>${verified() ? `<br>fingerprint <span class="bits">${byteBits(edge.fp)}</span>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderCells(state, ev) {
+      const pos = new Set(eventPositions(ev));
+      const lookupInfo = lookup.active ? lookupInfoForSelected() : null;
+      const lookupSet = lookupInfo ? new Set(lookupInfo.positions) : new Set();
+      const target = ev && ev.type === "assign" ? ev.target : -1;
+      const others = ev && ev.type === "assign" ? new Set(ev.others) : new Set();
+
+      els.cellsGrid.innerHTML = Array.from({ length: params.arrayLen }, (_, i) => {
+        const classes = ["cell"];
+        if (pos.has(i) && ev.type !== "assign") classes.push("hot");
+        if (i === target) classes.push("target");
+        if (others.has(i)) classes.push("other");
+        if (lookupSet.has(i) && lookup.step >= 0) classes.push("lookup");
+        if (state.degrees[i] === 1) classes.push("singleton");
+        const tags = tagsForCell(i).map(t => `<span class="tag">${t}</span>`).join("");
+        const dataBits = byteBits(state.data[i]);
+        const checkBits = byteBits(state.checks[i]);
+        return `<div class="${classes.join(" ")}" id="cell-${i}">
+          <div><span class="idx">${i}</span><span class="degree">deg ${state.degrees[i]}</span></div>
+          <div class="cell-bits">
+            <div>D <span class="${state.assigned.has(i) ? "" : "muted"}">${dataBits}</span></div>
+            ${verified() ? `<div>C <span class="${state.assigned.has(i) ? "" : "muted"}">${checkBits}</span></div>` : ""}
+          </div>
+          <div class="tags">${tags}</div>
+        </div>`;
+      }).join("");
+    }
+
+    function renderTimeline(state, ev) {
+      const stepLabel = `<span class="pill">step ${currentStep + 1} / ${demo.events.length}</span>`;
+      let title = "";
+      let body = "";
+      if (ev.type === "intro") {
+        title = "Start: every key is one equation";
+        body = `Each colored key will become <span class="formula">D[h0] ⊕ D[h1] ⊕ D[h2] = value</span>. Click step to hash keys into cells.`;
+      } else if (ev.type === "hash") {
+        const e = demo.edges[ev.edgeId];
+        title = `Hash ${e.key}`;
+        body = `Mixed hash <span class="formula">${hex64(e.hash)}</span> chooses cells <span class="formula">[${e.positions.join(", ")}]</span>. The displayed value is <span class="formula">${byteBits(e.value)}</span>.`;
+      } else if (ev.type === "degree") {
+        title = "Find singleton cells";
+        body = `The number in each cell is its remaining degree. A degree-1 cell touches exactly one equation, so that equation can be peeled and solved later.`;
+      } else if (ev.type === "peel") {
+        const e = demo.edges[ev.edgeId];
+        title = `Peel ${e.key} using singleton cell ${ev.cell}`;
+        body = `Remove the equation for <strong>${e.key}</strong> and push it on the stack. Removing it may turn neighboring cells into new singletons.`;
+      } else if (ev.type === "assignmentIntro") {
+        title = "Now solve backward";
+        body = `Peeling succeeded. Walk the peel stack in reverse. For each key, one cell is free; set it to make the XOR equation true.`;
+      } else if (ev.type === "assign") {
+        const e = demo.edges[ev.edgeId];
+        title = `Assign cell ${ev.target} for ${e.key}`;
+        body = `Data: <span class="formula">D[${ev.target}] = ${byteBits(ev.value)} ⊕ ${byteBits(ev.otherData[0])} ⊕ ${byteBits(ev.otherData[1])} = ${byteBits(ev.dataValue)}</span>`;
+        if (verified()) {
+          body += `<br>Check: <span class="formula">C[${ev.target}] = fp ${byteBits(ev.fp)} ⊕ ${byteBits(ev.otherChecks[0])} ⊕ ${byteBits(ev.otherChecks[1])} = ${byteBits(ev.checkValue)}</span>`;
+        }
+      } else if (ev.type === "done") {
+        title = "Built: lookup is just hash, three reads, two XORs";
+        body = verified()
+          ? `Verified mode stores both data cells and check cells. Missing keys usually fail the fingerprint equation and return <span class="formula">None</span>.`
+          : `Unchecked mode stores only data cells. Missing keys still produce some byte; that value is unspecified.`;
+      }
+
+      const stackHtml = state.stack.length
+        ? `<div class="stack-view"><strong>Peel stack:</strong>${state.stack.map(s => `<span class="stack-item">${demo.edges[s.edgeId].key}@${s.cell}</span>`).join("")}</div>`
+        : `<div class="stack-view"><strong>Peel stack:</strong><span class="stack-item">empty</span></div>`;
+
+      els.timeline.innerHTML = `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center"><h3>${title}</h3>${stepLabel}</div><p class="timeline-text">${body}</p>${stackHtml}`;
+    }
+
+    function drawEdges(state, ev) {
+      const svg = els.edgeSvg;
+      svg.innerHTML = "";
+      const stageBox = els.graphStage.getBoundingClientRect();
+      svg.setAttribute("viewBox", `0 0 ${stageBox.width} ${stageBox.height}`);
+      const activeEdge = ev && (ev.type === "hash" || ev.type === "peel" || ev.type === "assign") ? ev.edgeId : -1;
+
+      for (const edge of demo.edges) {
+        const keyEl = document.getElementById(`key-${edge.id}`);
+        if (!keyEl) continue;
+        const keyBox = keyEl.getBoundingClientRect();
+        const x1 = keyBox.right - stageBox.left;
+        const y1 = keyBox.top + keyBox.height / 2 - stageBox.top;
+        for (const p of edge.positions) {
+          const cellEl = document.getElementById(`cell-${p}`);
+          if (!cellEl) continue;
+          const cellBox = cellEl.getBoundingClientRect();
+          const x2 = cellBox.left + cellBox.width / 2 - stageBox.left;
+          const y2 = cellBox.top + cellBox.height / 2 - stageBox.top;
+          const dx = Math.max(60, (x2 - x1) * .45);
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", edge.color);
+          path.setAttribute("stroke-width", activeEdge === edge.id ? "3.4" : "1.6");
+          path.setAttribute("opacity", state.peeled.has(edge.id) ? ".16" : (activeEdge === edge.id ? ".95" : ".52"));
+          if (state.peeled.has(edge.id)) path.setAttribute("stroke-dasharray", "5 5");
+          svg.appendChild(path);
+        }
+      }
+    }
+
+    function renderLookupReadout() {
+      const info = lookupInfoForSelected();
+      if (!lookup.active) {
+        els.lookupReadout.innerHTML = `<p class="lookup-text">Choose a present key or the missing key <span class="formula">${MISSING_KEY}</span>, then animate lookup. Normal mode will always produce a byte; verified mode checks a fingerprint first.</p>`;
+        return;
+      }
+
+      const reads = info.positions.map(p => `D[${p}]=${byteBits(demo.finalData[p])}`).join(" ⊕ ");
+      const checkReads = info.positions.map(p => `C[${p}]=${byteBits(demo.finalChecks[p])}`).join(" ⊕ ");
+      const step = lookup.step;
+      let text = "";
+      if (step === 0) {
+        text = `Hash <strong>${info.key}</strong>: mixed hash <span class="formula">${hex64(info.hash)}</span> maps to cells <span class="formula">[${info.positions.join(", ")}]</span>.`;
+      } else if (step === 1) {
+        text = `Read the three data cells: <span class="formula">${reads}</span>.`;
+      } else if (step === 2) {
+        text = `XOR the data cells: <span class="formula">${reads} = ${byteBits(info.value)}</span>.`;
+      } else {
+        text = `Verified check: <span class="formula">${checkReads} = ${byteBits(info.check)}</span>, expected fingerprint <span class="formula">${byteBits(info.fp)}</span>.`;
+      }
+
+      let result = "";
+      if (verified()) {
+        if (lookup.step < 3) {
+          result = `<div class="result-line">Verified result pending fingerprint check.</div>`;
+        } else if (info.present) {
+          result = `<div class="result-line good">Fingerprint matches. Return <span class="formula">Some(${info.value})</span>${info.known ? " for a stored key." : " — a rare demo false positive."}</div>`;
+        } else {
+          result = `<div class="result-line bad">Fingerprint mismatch. Return <span class="formula">None</span>.</div>`;
+        }
+      } else {
+        const cls = info.known ? "good" : "warn";
+        const suffix = info.known ? "This key was stored, so the value is meaningful." : "This key was not stored, so this byte is unspecified garbage.";
+        result = `<div class="result-line ${cls}">Unchecked result: <span class="formula">${info.value}</span> (<span class="bits">${byteBits(info.value)}</span>). ${suffix}</div>`;
+      }
+
+      els.lookupReadout.innerHTML = `<p class="lookup-text">${text}</p><div class="lookup-result">${result}</div>`;
+    }
+
+    function populateLookupSelect() {
+      els.lookupKey.innerHTML = [
+        ...DEMO_ITEMS.map(item => `<option value="${item.key}">${item.key} (stored)</option>`),
+        `<option value="${MISSING_KEY}">${MISSING_KEY} (missing)</option>`,
+      ].join("");
+      els.lookupKey.value = lookup.key;
+    }
+
+    function stopPlay() {
+      if (playTimer) clearInterval(playTimer);
+      playTimer = null;
+      els.playBtn.textContent = "Play";
+    }
+
+    function stopLookup() {
+      if (lookupTimer) clearInterval(lookupTimer);
+      lookupTimer = null;
+    }
+
+    function stepConstruction() {
+      stopLookup();
+      lookup.active = false;
+      if (currentStep < demo.events.length - 1) currentStep++;
+      render();
+    }
+
+    function playConstruction() {
+      if (playTimer) {
+        stopPlay();
+        return;
+      }
+      lookup.active = false;
+      els.playBtn.textContent = "Pause";
+      playTimer = setInterval(() => {
+        if (currentStep >= demo.events.length - 1) {
+          stopPlay();
+          return;
+        }
+        currentStep++;
+        render();
+      }, Number(els.speed.value));
+    }
+
+    function animateLookup() {
+      stopPlay();
+      stopLookup();
+      currentStep = demo.events.length - 1;
+      lookup = { active: true, key: els.lookupKey.value, step: 0 };
+      render();
+      lookupTimer = setInterval(() => {
+        const last = verified() ? 3 : 2;
+        if (lookup.step >= last) {
+          stopLookup();
+          return;
+        }
+        lookup.step++;
+        render();
+      }, Math.max(420, Number(els.speed.value)));
+    }
+
+    els.resetBtn.addEventListener("click", () => {
+      stopPlay();
+      stopLookup();
+      currentStep = 0;
+      lookup.active = false;
+      render();
+    });
+    els.stepBtn.addEventListener("click", stepConstruction);
+    els.playBtn.addEventListener("click", playConstruction);
+    els.finishBtn.addEventListener("click", () => {
+      stopPlay();
+      stopLookup();
+      currentStep = demo.events.length - 1;
+      lookup.active = false;
+      render();
+    });
+    els.verifiedMode.addEventListener("change", () => {
+      if (lookup.active && lookup.step > (verified() ? 3 : 2)) lookup.step = verified() ? 3 : 2;
+      render();
+    });
+    els.lookupKey.addEventListener("change", () => {
+      lookup.key = els.lookupKey.value;
+      lookup.step = lookup.active ? 0 : -1;
+      render();
+    });
+    els.lookupBtn.addEventListener("click", animateLookup);
+    window.addEventListener("resize", () => render());
+
+    populateLookupSelect();
+    render();
+  </script>
+
+
+</body></html>
